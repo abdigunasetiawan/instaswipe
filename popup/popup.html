@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=400, initial-scale=1.0">
+  <title>InstaSwipe</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" 
+                stroke="url(#heartGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <defs>
+            <linearGradient id="heartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#833ab4"/>
+              <stop offset="50%" style="stop-color:#fd1d1d"/>
+              <stop offset="100%" style="stop-color:#fcb045"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <div>
+          <h1 class="logo-title">InstaSwipe</h1>
+          <p class="logo-subtitle">Bulk Unlike Tool</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Status Badge -->
+    <div class="status-bar">
+      <div class="status-indicator" id="statusIndicator">
+        <span class="status-dot"></span>
+        <span class="status-text" id="statusText">Idle</span>
+      </div>
+      <span class="page-status" id="pageStatus">—</span>
+    </div>
+
+    <!-- Settings -->
+    <section class="settings-section">
+      <h2 class="section-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+        Pengaturan
+      </h2>
+      <div class="settings-grid">
+        <div class="setting-item">
+          <label for="batchSize">Batch Size</label>
+          <div class="input-group">
+            <input type="number" id="batchSize" min="10" max="100" value="100" step="10">
+            <span class="input-hint">10-100 post</span>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label for="delay">Delay</label>
+          <div class="input-group">
+            <input type="number" id="delay" min="1" max="10" value="3" step="1">
+            <span class="input-hint">1-10 detik</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="controls-section">
+      <div class="controls-row">
+        <button id="btnStart" class="btn btn-start" title="Mulai proses unlike">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Start
+        </button>
+        <button id="btnPause" class="btn btn-pause" disabled title="Pause proses">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          Pause
+        </button>
+        <button id="btnStop" class="btn btn-stop" disabled title="Hentikan proses">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          Stop
+        </button>
+      </div>
+    </section>
+
+    <!-- Statistics -->
+    <section class="stats-section">
+      <h2 class="section-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 20V10M12 20V4M6 20v-6"/>
+        </svg>
+        Statistik Session
+      </h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-value" id="statUnliked">0</span>
+          <span class="stat-label">Unliked</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="statBatches">0</span>
+          <span class="stat-label">Batches</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="statSelected">0</span>
+          <span class="stat-label">Selected</span>
+        </div>
+      </div>
+      <!-- Progress bar -->
+      <div class="progress-container" id="progressContainer" style="display:none;">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <span class="progress-text" id="progressText">0%</span>
+      </div>
+    </section>
+
+    <!-- Log section -->
+    <section class="log-section">
+      <h2 class="section-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+        </svg>
+        Log & Export
+      </h2>
+      <div class="log-info">
+        <span id="logCount">0 postingan tercatat</span>
+      </div>
+      <div class="export-row">
+        <button id="btnExportJSON" class="btn btn-export" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          JSON
+        </button>
+        <button id="btnExportHTML" class="btn btn-export" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+          </svg>
+          HTML
+        </button>
+      </div>
+    </section>
+
+    <!-- Activity Log -->
+    <section class="activity-section">
+      <h2 class="section-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        Activity Log
+      </h2>
+      <div class="activity-log" id="activityLog">
+        <div class="log-entry log-info-entry">Siap digunakan. Buka halaman Instagram Likes dan klik Start.</div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>InstaSwipe v1.0.0</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
