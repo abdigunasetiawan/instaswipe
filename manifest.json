@@ -5,6 +5,8 @@
   "description": "Browser extension untuk bulk unlike postingan Instagram secara otomatis menggunakan fitur multi-select.",
   "permissions": [
     "activeTab",
+    "tabs",
+    "windows",
     "storage",
     "scripting",
     "downloads"

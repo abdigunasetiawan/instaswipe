@@ -6,6 +6,8 @@
 (function () {
   'use strict';
 
+  const LIKES_URL = 'https://www.instagram.com/your_activity/interactions/likes';
+
   // ====== DOM Elements ======
   const el = {
     batchSize: document.getElementById('batchSize'),
@@ -30,15 +32,16 @@
   };
 
   // ====== State ======
-  let currentStatus = 'idle'; // idle, running, paused, stopped, finished
+  let currentStatus = 'idle';
   let logData = [];
+  let likesTabId = null;
 
   // ====== Init ======
   async function init() {
     await loadSettings();
     await checkPageStatus();
     setupEventListeners();
-    addLog('Extension siap. Buka halaman Instagram Likes dan klik Start.', 'info');
+    addLog('Extension siap. Klik Start untuk memulai.', 'info');
   }
 
   // ====== Settings ======
@@ -78,9 +81,11 @@
       if (tab && tab.url && tab.url.includes('instagram.com/your_activity/interactions/likes')) {
         el.pageStatus.textContent = '✓ Halaman Likes terdeteksi';
         el.pageStatus.style.color = '#00d68f';
+        likesTabId = tab.id;
       } else {
         el.pageStatus.textContent = '✗ Bukan halaman Likes';
         el.pageStatus.style.color = '#ff4757';
+        likesTabId = null;
       }
     } catch (e) {
       el.pageStatus.textContent = '—';
@@ -104,6 +109,88 @@
   }
 
   // ====== Command Handlers ======
+
+  /**
+   * Pastikan halaman Instagram Likes terbuka.
+   * - Jika sudah ada tab Likes → aktifkan tab itu
+   * - Jika tab aktif adalah instagram.com → redirect URL di tab yang sama  
+   * - Jika bukan instagram → redirect URL di tab aktif
+   */
+  async function ensureLikesTab() {
+    // Cek 1: Apakah sudah ada tab Instagram Likes?
+    const existingTabs = await chrome.tabs.query({ url: '*://www.instagram.com/your_activity/interactions/likes*' });
+    if (existingTabs.length > 0) {
+      await chrome.tabs.update(existingTabs[0].id, { active: true });
+      likesTabId = existingTabs[0].id;
+      el.pageStatus.textContent = '✓ Halaman Likes terdeteksi';
+      el.pageStatus.style.color = '#00d68f';
+      return existingTabs[0].id;
+    }
+
+    // Cek 2: Tab saat ini — ubah URL-nya langsung (jangan buat tab baru)
+    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    addLog('Membuka halaman Instagram Likes...', 'info');
+    el.pageStatus.textContent = '⏳ Membuka halaman Likes...';
+    el.pageStatus.style.color = '#fcb045';
+
+    // Redirect tab aktif ke halaman Likes
+    await chrome.tabs.update(currentTab.id, { url: LIKES_URL });
+    likesTabId = currentTab.id;
+
+    // Tunggu halaman selesai loading
+    await new Promise((resolve) => {
+      function onUpdated(tabId, changeInfo) {
+        if (tabId === currentTab.id && changeInfo.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          resolve();
+        }
+      }
+      chrome.tabs.onUpdated.addListener(onUpdated);
+    });
+
+    // Beri waktu agar content script ter-inject
+    await new Promise((r) => setTimeout(r, 2000));
+
+    el.pageStatus.textContent = '✓ Halaman Likes terdeteksi';
+    el.pageStatus.style.color = '#00d68f';
+
+    return currentTab.id;
+  }
+
+  /**
+   * Dapatkan ID tab Likes yang aktif
+   */
+  async function getActiveLikesTabId() {
+    // Cek likesTabId yang tersimpan masih valid
+    if (likesTabId) {
+      try {
+        const tab = await chrome.tabs.get(likesTabId);
+        if (tab && tab.url && tab.url.includes('instagram.com/your_activity/interactions/likes')) {
+          return likesTabId;
+        }
+      } catch (e) {
+        // Tab mungkin sudah ditutup
+      }
+    }
+
+    // Cari tab Likes yang ada
+    const tabs = await chrome.tabs.query({ url: '*://www.instagram.com/your_activity/interactions/likes*' });
+    if (tabs.length > 0) {
+      likesTabId = tabs[0].id;
+      return tabs[0].id;
+    }
+
+    // Fallback: tab aktif saat ini
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab) {
+      likesTabId = activeTab.id;
+      return activeTab.id;
+    }
+
+    return null;
+  }
+
   async function handleStart() {
     const batchSize = parseInt(el.batchSize.value);
     const delay = parseInt(el.delay.value);
@@ -118,18 +205,9 @@
     }
 
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab) {
-        addLog('Tidak dapat menemukan tab aktif', 'error');
-        return;
-      }
+      const tabId = await ensureLikesTab();
 
-      if (!tab.url || !tab.url.includes('instagram.com/your_activity/interactions/likes')) {
-        addLog('Silakan buka halaman Instagram Likes terlebih dahulu', 'error');
-        return;
-      }
-
-      await chrome.tabs.sendMessage(tab.id, {
+      await chrome.tabs.sendMessage(tabId, {
         action: 'start',
         settings: { batchSize, delay },
       });
@@ -137,16 +215,16 @@
       setStatus('running');
       addLog(`Memulai proses unlike (batch: ${batchSize}, delay: ${delay}s)`, 'info');
     } catch (e) {
-      addLog('Gagal mengirim perintah. Pastikan halaman Instagram Likes sudah terbuka.', 'error');
+      addLog('Gagal mengirim perintah. Coba reload halaman dan klik Start lagi.', 'error');
       console.error(e);
     }
   }
 
   async function handlePause() {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) {
-        await chrome.tabs.sendMessage(tab.id, { action: 'pause' });
+      const tabId = await getActiveLikesTabId();
+      if (tabId) {
+        await chrome.tabs.sendMessage(tabId, { action: 'pause' });
         if (currentStatus === 'paused') {
           setStatus('running');
           addLog('Melanjutkan proses...', 'info');
@@ -154,6 +232,8 @@
           setStatus('paused');
           addLog('Proses dijeda', 'warn');
         }
+      } else {
+        addLog('Tidak dapat menemukan tab Instagram Likes', 'error');
       }
     } catch (e) {
       addLog('Gagal mengirim perintah pause', 'error');
@@ -162,11 +242,13 @@
 
   async function handleStop() {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) {
-        await chrome.tabs.sendMessage(tab.id, { action: 'stop' });
+      const tabId = await getActiveLikesTabId();
+      if (tabId) {
+        await chrome.tabs.sendMessage(tabId, { action: 'stop' });
         setStatus('stopped');
         addLog('Proses dihentikan oleh user', 'warn');
+      } else {
+        addLog('Tidak dapat menemukan tab Instagram Likes', 'error');
       }
     } catch (e) {
       addLog('Gagal mengirim perintah stop', 'error');
@@ -196,6 +278,10 @@
 
       case 'status_change':
         setStatus(message.status);
+        // Simpan likesTabId dari content script
+        if (sender && sender.tab) {
+          likesTabId = sender.tab.id;
+        }
         break;
 
       case 'progress':
@@ -211,13 +297,11 @@
     currentStatus = status;
     el.statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
 
-    // Reset dot classes
     el.statusDot.className = 'status-dot';
     if (status !== 'idle') {
       el.statusDot.classList.add(status);
     }
 
-    // Update button states
     switch (status) {
       case 'running':
         el.btnStart.disabled = true;
@@ -281,7 +365,6 @@
     el.activityLog.appendChild(entry);
     el.activityLog.scrollTop = el.activityLog.scrollHeight;
 
-    // Limit log entries
     while (el.activityLog.children.length > 100) {
       el.activityLog.removeChild(el.activityLog.firstChild);
     }
@@ -297,17 +380,40 @@
     try {
       let content, mimeType, filename;
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const exportedAt = new Date().toISOString();
+      const exportedAtLocal = new Date().toLocaleString('id-ID');
 
       if (format === 'json') {
-        content = JSON.stringify({
-          exported_at: new Date().toISOString(),
+        const exportObj = {
+          exported_at: exportedAt,
+          exported_at_local: exportedAtLocal,
+          app: 'InstaSwipe',
+          version: '1.0.0',
           total_posts: logData.length,
-          posts: logData,
-        }, null, 2);
+          summary: {
+            total: logData.length,
+            reels: logData.filter(p => p.type === 'reel').length,
+            posts: logData.filter(p => p.type === 'post').length,
+            carousels: logData.filter(p => p.type === 'carousel').length,
+            with_url: logData.filter(p => p.url).length,
+            with_thumbnail: logData.filter(p => p.thumbnail).length,
+          },
+          posts: logData.map((post, i) => ({
+            index: i + 1,
+            url: post.url || null,
+            shortcode: post.shortcode || null,
+            type: post.type || 'unknown',
+            thumbnail: post.thumbnail || null,
+            media_id: post.media_id || null,
+            unliked_at: post.unliked_at || null,
+            unliked_at_local: post.unliked_at ? new Date(post.unliked_at).toLocaleString('id-ID') : null,
+          })),
+        };
+        content = JSON.stringify(exportObj, null, 2);
         mimeType = 'application/json';
         filename = `instaswipe-log-${timestamp}.json`;
       } else {
-        content = generateHTML(logData, timestamp);
+        content = generateHTML(logData, timestamp, exportedAtLocal);
         mimeType = 'text/html';
         filename = `instaswipe-log-${timestamp}.html`;
       }
@@ -327,31 +433,204 @@
     }
   }
 
-  function generateHTML(data, timestamp) {
+  function generateHTML(data, timestamp, exportedAtLocal) {
+    const reelCount = data.filter(p => p.type === 'reel').length;
+    const postCount = data.filter(p => p.type === 'post').length;
+    const urlCount = data.filter(p => p.url).length;
+    const thumbCount = data.filter(p => p.thumbnail).length;
+
+    const cardItems = data.map((post, i) => {
+      const dateStr = post.unliked_at ? new Date(post.unliked_at).toLocaleString('id-ID') : '—';
+      const typeLabel = post.type === 'reel' ? '🎬 Reel' : post.type === 'carousel' ? '📸 Carousel' : '🖼️ Post';
+      const typeClass = post.type === 'reel' ? 'type-reel' : post.type === 'carousel' ? 'type-carousel' : 'type-post';
+      const hasUrl = post.url && post.url !== 'unknown';
+
+      // Card wrapper: jika punya URL, bungkus dengan <a>
+      const openTag = hasUrl
+        ? `<a href="${post.url}" target="_blank" rel="noopener" class="card-link" title="Buka di Instagram">`
+        : `<div class="card-link">`;
+      const closeTag = hasUrl ? `</a>` : `</div>`;
+
+      return `
+    ${openTag}
+      <div class="card">
+        <div class="card-thumb">
+          ${post.thumbnail
+            ? `<img src="${post.thumbnail}" alt="Post #${i + 1}" loading="lazy" referrerpolicy="no-referrer" crossorigin="anonymous" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+            : ''
+          }
+          <div class="thumb-placeholder" ${post.thumbnail ? 'style="display:none"' : ''}>#${i + 1}</div>
+        </div>
+        <div class="card-body">
+          <div class="card-header">
+            <span class="card-num">#${i + 1}</span>
+            <span class="card-type ${typeClass}">${typeLabel}</span>
+          </div>
+          ${hasUrl ? `<div class="card-url">${post.url.replace('https://www.instagram.com', '')}</div>` : ''}
+          ${post.shortcode ? `<div class="card-id">Shortcode: <code>${post.shortcode}</code></div>` : ''}
+          <div class="card-date">🗑️ Unliked: ${dateStr}</div>
+        </div>
+      </div>
+    ${closeTag}`;
+    }).join('');
+
     return `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>InstaSwipe Log - ${timestamp}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title>InstaSwipe Log — ${timestamp}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e8e8f0; padding: 40px; max-width: 800px; margin: 0 auto; }
-    h1 { background: linear-gradient(135deg, #833ab4, #fd1d1d, #fcb045); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .meta { color: #8888a0; margin-bottom: 24px; }
-    .post { padding: 12px 16px; margin: 4px 0; background: #16161f; border-radius: 8px; border-left: 3px solid #833ab4; }
-    .post a { color: #fcb045; text-decoration: none; }
-    .post a:hover { text-decoration: underline; }
-    .post .date { color: #5a5a70; font-size: 12px; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0f;
+      color: #e8e8f0;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    .header {
+      max-width: 1200px;
+      margin: 0 auto 32px;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #833ab4, #fd1d1d, #fcb045);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 8px;
+    }
+    .meta { color: #8888a0; font-size: 14px; line-height: 1.6; }
+    .summary {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px;
+    }
+    .summary-chip {
+      background: #16161f;
+      border: 1px solid #2a2a3f;
+      border-radius: 99px;
+      padding: 6px 14px;
+      font-size: 13px;
+      color: #b0b0cc;
+    }
+    .summary-chip strong { color: #fcb045; }
+    .grid {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .card-link {
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+    .card {
+      background: #13131c;
+      border: 1px solid #1e1e2e;
+      border-radius: 14px;
+      overflow: hidden;
+      transition: transform .2s, border-color .2s, box-shadow .2s;
+      cursor: pointer;
+    }
+    .card:hover {
+      transform: translateY(-3px);
+      border-color: #833ab4;
+      box-shadow: 0 8px 24px rgba(131, 58, 180, 0.15);
+    }
+    .card-thumb {
+      width: 100%;
+      aspect-ratio: 1;
+      background: #0d0d14;
+      overflow: hidden;
+      position: relative;
+    }
+    .card-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .thumb-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #3a3a55;
+      background: linear-gradient(135deg, #0d0d14, #1a1a2e);
+    }
+    .card-body { padding: 10px 12px; }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .card-num { font-size: 11px; color: #5a5a78; }
+    .card-type {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-weight: 600;
+    }
+    .type-reel { background: #2a1a3a; color: #c87bff; }
+    .type-post { background: #1a2a3a; color: #7bb8ff; }
+    .type-carousel { background: #3a2a1a; color: #ffb87b; }
+    .card-url {
+      font-size: 11px;
+      color: #fcb045;
+      margin-bottom: 4px;
+      word-break: break-all;
+      line-height: 1.3;
+    }
+    .card-id {
+      font-size: 10px;
+      color: #6a6a88;
+      margin-bottom: 4px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .card-id code {
+      background: #1e1e30;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 9px;
+    }
+    .card-date { font-size: 11px; color: #5a5a78; }
+    footer {
+      text-align: center;
+      color: #3a3a50;
+      font-size: 12px;
+      margin-top: 48px;
+    }
   </style>
 </head>
 <body>
-  <h1>InstaSwipe - Unlike Log</h1>
-  <p class="meta">Exported: ${new Date().toLocaleString('id-ID')} | Total: ${data.length} posts</p>
-  ${data.map((post, i) => `
-  <div class="post">
-    <span>#${i + 1}</span>
-    <a href="${post.url}" target="_blank" rel="noopener">${post.url}</a>
-    ${post.unliked_at ? `<span class="date"> — ${new Date(post.unliked_at).toLocaleString('id-ID')}</span>` : ''}
-  </div>`).join('')}
+  <div class="header">
+    <h1>⚡ InstaSwipe — Unlike Log</h1>
+    <div class="meta">
+      <div>Diekspor: ${exportedAtLocal}</div>
+      <div class="summary">
+        <div class="summary-chip">Total: <strong>${data.length}</strong></div>
+        <div class="summary-chip">🖼️ Post: <strong>${postCount}</strong></div>
+        <div class="summary-chip">🎬 Reel: <strong>${reelCount}</strong></div>
+        <div class="summary-chip">🔗 URL: <strong>${urlCount}</strong></div>
+        <div class="summary-chip">📷 Thumbnail: <strong>${thumbCount}</strong></div>
+      </div>
+    </div>
+  </div>
+  <div class="grid">
+    ${cardItems}
+  </div>
+  <footer>InstaSwipe v1.0.0 — Generated at ${exportedAtLocal}</footer>
 </body>
 </html>`;
   }

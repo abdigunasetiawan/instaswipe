@@ -18,31 +18,6 @@
     selectedPosts: new Set(),
   };
 
-  // ====== Selector Strategies ======
-  // Instagram uses obfuscated class names. We use multiple strategies:
-  // 1. aria-label / role attributes
-  // 2. Text content matching
-  // 3. Relative DOM traversal
-  const SELECTORS = {
-    // "Select" button to enter multi-select mode
-    selectButton: [
-      'button:has(> div:not(:empty))',  // generic fallback
-    ],
-    // Post checkboxes / clickable post items in select mode
-    postCheckbox: [
-      'div[role="button"][tabindex="0"]',
-      'div[role="checkbox"]',
-    ],
-    // "Unlike" or "Remove" confirmation button  
-    unlikeButton: [
-      'button[type="button"]',
-    ],
-    // Post grid container
-    postGrid: [
-      'div[style*="flex-direction: column"]',
-    ],
-  };
-
   // ====== Utility Functions ======
 
   /**
@@ -85,7 +60,6 @@
 
         attempt++;
         if (attempt > retries) {
-          // Use MutationObserver as final attempt
           const observer = new MutationObserver(() => {
             const el = findFn();
             if (el) {
@@ -113,21 +87,6 @@
   }
 
   /**
-   * Find element by text content (case-insensitive)
-   */
-  function findByText(tagName, text, container = document) {
-    const elements = container.querySelectorAll(tagName);
-    const textLower = text.toLowerCase();
-    for (const el of elements) {
-      const elText = el.textContent.trim().toLowerCase();
-      if (elText === textLower || elText.includes(textLower)) {
-        return el;
-      }
-    }
-    return null;
-  }
-
-  /**
    * Find button by text content
    */
   function findButtonByText(text) {
@@ -139,7 +98,7 @@
       if (el.textContent.trim().toLowerCase() === textLower) {
         const clickableParent = el.closest('[role="button"], button');
         if (clickableParent) return clickableParent;
-        return el; // fallback
+        return el;
       }
     }
 
@@ -162,7 +121,6 @@
     try {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-      // Dispatch mouse events to simulate real click
       const events = ['mousedown', 'mouseup', 'click'];
       for (const eventType of events) {
         const event = new MouseEvent(eventType, {
@@ -201,31 +159,19 @@
     }
   }
 
-  /**
-   * Send log to popup
-   */
   function log(text, level = 'info') {
     console.log(`[InstaSwipe] [${level.toUpperCase()}] ${text}`);
     sendToPopup({ type: 'log', text, level });
   }
 
-  /**
-   * Update stats in popup
-   */
   function updateStats() {
     sendToPopup({ type: 'stats_update', data: { ...state.stats } });
   }
 
-  /**
-   * Update progress in popup
-   */
   function updateProgress(current, total) {
     sendToPopup({ type: 'progress', current, total });
   }
 
-  /**
-   * Change status
-   */
   function setStatus(status) {
     sendToPopup({ type: 'status_change', status });
   }
@@ -233,13 +179,12 @@
   // ====== Core Logic ======
 
   /**
-   * Step 1: Find and click the "Select" button
+   * Step 1: Click "Select" button
    */
   async function clickSelectButton() {
     log('Mencari tombol Select...');
 
     const selectBtn = await waitForElement(() => {
-      // Try "Select" text
       return findButtonByText('Select') || findButtonByText('Pilih');
     });
 
@@ -261,7 +206,7 @@
   }
 
   /**
-   * Step 2: Find selectable posts and select them
+   * Step 2: Select posts
    */
   async function selectPosts(maxCount) {
     log(`Memilih postingan (maks: ${maxCount})...`);
@@ -276,8 +221,6 @@
         continue;
       }
 
-      // Find selectable post items
-      // In Instagram's multi-select mode, posts become clickable checkboxes
       const postItems = findSelectableItems();
 
       if (postItems.length === 0) {
@@ -292,7 +235,6 @@
         continue;
       }
 
-      // Select unselected posts
       for (const item of postItems) {
         if (selectedCount >= maxCount || state.isStopped) break;
         if (state.isPaused) {
@@ -300,17 +242,14 @@
           continue;
         }
 
-        // Generate a unique key for this post
         const postKey = getPostKey(item);
         if (state.selectedPosts.has(postKey)) continue;
 
-        // Check if already selected (has blue checkmark/selected state)
         if (isAlreadySelected(item)) {
           state.selectedPosts.add(postKey);
           continue;
         }
 
-        // Click to select
         const clicked = simulateClick(item);
         if (clicked) {
           state.selectedPosts.add(postKey);
@@ -319,15 +258,13 @@
           updateStats();
           updateProgress(selectedCount, maxCount);
 
-          // Collect post URL if possible
+          // Collect post data (thumbnail, type)
           collectPostData(item);
 
-          // Small delay between selections (human-like)
           await wait(150 + Math.random() * 200);
         }
       }
 
-      // Check if we need more posts
       if (selectedCount < maxCount) {
         const currentPostCount = findSelectableItems().length;
         if (currentPostCount === previousPostCount) {
@@ -352,52 +289,42 @@
   }
 
   /**
-   * Find selectable items in the post grid
+   * Find selectable items - berdasarkan DOM bloks Instagram
+   * Setiap post punya div[data-testid="bulk_action_checkbox"]
+   * Target klik = parent container yang punya pointer-events: auto + role="button"
    */
   function findSelectableItems() {
     const items = [];
 
-    // Strategy A: Instagram bloks checkbox
+    // Strategy A: Bloks checkbox (paling akurat berdasarkan DOM user)
     const bulkCheckboxes = document.querySelectorAll('div[data-testid="bulk_action_checkbox"]');
     if (bulkCheckboxes.length > 0) {
       for (const cb of bulkCheckboxes) {
-        // use parent if possible because of pointer-events:none
-        let target = cb.parentElement && cb.parentElement.tagName === 'DIV' ? cb.parentElement : cb;
-        if (isInContentArea(target)) items.push(target);
+        // Naik ke container clickable (role="button" dengan aria-label="Image with button" atau "Gambar Postingan")
+        // Dari DOM: checkbox -> parent -> parent -> ... -> div[role="button"][aria-label="Image with button"]
+        let clickTarget = cb.closest('div[role="button"][aria-label]');
+        if (!clickTarget) {
+          // Fallback: naik ke parent yang punya cursor pointer
+          clickTarget = cb.closest('div[style*="cursor: pointer"]');
+        }
+        if (!clickTarget) {
+          // Fallback lagi: parent dari checkbox langsung
+          clickTarget = cb.parentElement;
+        }
+        if (clickTarget && !items.includes(clickTarget)) {
+          items.push(clickTarget);
+        }
       }
     }
 
     if (items.length > 0) return items;
 
-    // Strategy 1: Find all images/posts in the likes grid that are clickable
-    // In select mode, Instagram wraps posts in clickable containers
+    // Strategy B: Find images in content area with clickable parent
     const allButtons = document.querySelectorAll('div[role="button"]');
     for (const btn of allButtons) {
-      // Filter: should contain an image and be within the content area
       const img = btn.querySelector('img');
       if (img && isInContentArea(btn)) {
         items.push(btn);
-      }
-    }
-
-    if (items.length > 0) return items;
-
-    // Strategy 2: Look for checkbox-like elements
-    const checkboxes = document.querySelectorAll('div[role="checkbox"], input[type="checkbox"]');
-    for (const cb of checkboxes) {
-      if (isInContentArea(cb)) {
-        items.push(cb);
-      }
-    }
-
-    if (items.length > 0) return items;
-
-    // Strategy 3: Find grid items with images
-    const images = document.querySelectorAll('img[src*="instagram"]');
-    for (const img of images) {
-      const clickable = img.closest('div[role="button"], button, a');
-      if (clickable && isInContentArea(clickable) && !items.includes(clickable)) {
-        items.push(clickable);
       }
     }
 
@@ -405,11 +332,10 @@
   }
 
   /**
-   * Check if element is in the main content area (not header/nav)
+   * Check if element is in the main content area
    */
   function isInContentArea(el) {
     const rect = el.getBoundingClientRect();
-    // Must be visible and in the main content area
     return rect.width > 0 && rect.height > 0 && rect.top > 50 && rect.bottom < window.innerHeight + 500;
   }
 
@@ -425,55 +351,158 @@
 
   /**
    * Check if a post is already selected
+   * Berdasarkan DOM: selected = circle-check__filled (biru), unselected = circle__outline
    */
   function isAlreadySelected(element) {
-    // bloks UI specific: check if outerHTML contains "circle__check" or DOES NOT contain "circle__outline"
-    if (element.outerHTML && element.outerHTML.includes('circle__outline')) {
-      return false;
-    } else if (element.outerHTML && element.outerHTML.includes('circle__check')) {
-      return true;
+    // Cek mask-image di dalam checkbox area (bukan seluruh outerHTML yang terlalu besar)
+    const checkbox = element.querySelector('div[data-testid="bulk_action_checkbox"]') || element;
+    const icons = checkbox.querySelectorAll('div[data-bloks-name="ig.components.Icon"]');
+    for (const icon of icons) {
+      const maskImage = icon.style.maskImage || icon.style.webkitMaskImage || '';
+      if (maskImage.includes('circle-check__filled') || maskImage.includes('circle__check')) {
+        // Cek juga warna biru (selected state)
+        const bgColor = icon.style.backgroundColor || '';
+        if (bgColor.includes('74, 93, 249') || bgColor.includes('0, 149, 246')) {
+          return true;
+        }
+        return true;
+      }
+      if (maskImage.includes('circle__outline')) {
+        return false;
+      }
     }
 
-    // Instagram shows a blue circle/checkmark when selected
-    const svgCheck = element.querySelector('svg circle, svg path[fill*="blue"], svg[aria-label*="check"]');
-    if (svgCheck) return true;
-
-    // Check for aria-checked
-    if (element.getAttribute('aria-checked') === 'true') return true;
-
-    // Check for selected visual state (blue overlay / border)
-    const computed = window.getComputedStyle(element);
-    if (computed.borderColor && computed.borderColor.includes('rgb(0, 149, 246)')) return true;
-
-    // Check for the blue checkmark circle overlay
-    const blueElements = element.querySelectorAll('[style*="background-color: rgb(0, 149, 246)"], [style*="background: rgb(0, 149, 246)"]');
+    // Fallback: cek background color biru pada child elements
+    const blueElements = element.querySelectorAll('[style*="background-color: rgb(0, 149, 246)"], [style*="background-color: rgb(74, 93, 249)"]');
     if (blueElements.length > 0) return true;
 
     return false;
   }
 
   /**
+   * Konversi media ID numerik ke shortcode Instagram
+   * Instagram menggunakan base64 custom dengan 64 karakter alphabet
+   */
+  function mediaIdToShortcode(mediaIdStr) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let id = BigInt(mediaIdStr);
+    let shortcode = '';
+    while (id > 0n) {
+      shortcode = alphabet[Number(id % 64n)] + shortcode;
+      id = id / 64n;
+    }
+    return shortcode;
+  }
+
+  /**
+   * Ekstrak media ID dari ig_cache_key di URL thumbnail
+   * ig_cache_key berisi base64-encoded media ID
+   * Contoh: ig_cache_key=Mzg1OTI2NTQ0OTA3NTA3Nzk4NA%3D%3D.3-ccb7-5
+   *   → base64 decode → "3859265449075077984"
+   *   → shortcode → URL post
+   */
+  function extractMediaIdFromUrl(thumbnailUrl) {
+    if (!thumbnailUrl) return null;
+    
+    try {
+      // Cari ig_cache_key di URL
+      const match = thumbnailUrl.match(/ig_cache_key=([^&]+)/);
+      if (!match) return null;
+      
+      // URL-decode value
+      let cacheKey = decodeURIComponent(match[1]);
+      
+      // Ambil bagian sebelum titik (base64 part)
+      const dotIndex = cacheKey.indexOf('.');
+      if (dotIndex > 0) {
+        cacheKey = cacheKey.substring(0, dotIndex);
+      }
+      
+      // Base64 decode → media ID string
+      const mediaIdStr = atob(cacheKey);
+      
+      // Validasi: harus berupa angka
+      if (/^\d+$/.test(mediaIdStr)) {
+        return mediaIdStr;
+      }
+    } catch (e) {
+      console.log('[InstaSwipe] Error extracting media ID:', e);
+    }
+    
+    return null;
+  }
+
+  /**
    * Collect post data for logging
+   * Dari DOM bloks: thumbnail ada di img[data-bloks-name="bk.components.Image"]
+   * Tipe konten (reel/post) dapat dari icon mask-image "reels__filled"
+   * URL post dihasilkan dari media ID → shortcode
    */
   function collectPostData(element) {
     try {
-      const link = element.querySelector('a[href*="/p/"], a[href*="/reel/"]');
-      const img = element.querySelector('img');
+      // Ambil thumbnail dari img
+      const img = element.querySelector('img[data-bloks-name="bk.components.Image"]') ||
+                  element.querySelector('img');
       
+      // Deteksi tipe: reel atau post
+      let type = 'post';
+      const icons = element.querySelectorAll('div[data-bloks-name="ig.components.Icon"]');
+      for (const icon of icons) {
+        const maskImage = icon.style.maskImage || icon.style.webkitMaskImage || '';
+        if (maskImage.includes('reels__filled')) {
+          type = 'reel';
+          break;
+        }
+        if (maskImage.includes('carousel') || maskImage.includes('gallery')) {
+          type = 'carousel';
+          break;
+        }
+      }
+
+      // Ambil thumbnail URL
+      let thumbnailUrl = img ? img.src : null;
+      
+      // Ekstrak media ID dari ig_cache_key → konversi ke shortcode → buat URL
+      let url = null;
+      let mediaId = null;
+      let shortcode = null;
+      
+      mediaId = extractMediaIdFromUrl(thumbnailUrl);
+      if (mediaId) {
+        shortcode = mediaIdToShortcode(mediaId);
+        if (shortcode) {
+          // Reel → /reel/SHORTCODE/, Post → /p/SHORTCODE/
+          const urlPath = type === 'reel' ? 'reel' : 'p';
+          url = `https://www.instagram.com/${urlPath}/${shortcode}/`;
+        }
+      }
+
       const postData = {
-        url: link ? `https://www.instagram.com${link.getAttribute('href')}` : 'unknown',
-        thumbnail: img ? img.src : null,
+        url: url,
+        shortcode: shortcode,
+        thumbnail: thumbnailUrl,
+        type: type,
+        media_id: mediaId,
         unliked_at: new Date().toISOString(),
       };
 
+      log(`Post data: ${type} | ${shortcode || 'no-shortcode'} | ${url || 'no-url'}`, 'info');
       state.logData.push(postData);
     } catch (e) {
-      // Silently fail for individual post data collection
+      // Silently fail
+      state.logData.push({
+        url: null,
+        shortcode: null,
+        thumbnail: null,
+        type: 'unknown',
+        media_id: null,
+        unliked_at: new Date().toISOString(),
+      });
     }
   }
 
   /**
-   * Step 3: Click the Unlike/Remove button
+   * Step 3: Click Unlike/Remove button
    */
   async function clickUnlikeButton() {
     log('Mencari tombol Unlike...');
@@ -498,29 +527,21 @@
       return false;
     }
 
-    log('Tombol "Batal suka" di bagian bawah diklik', 'info');
+    log('Tombol "Batal suka" diklik', 'info');
 
-    // Wait for confirmation dialog if any
     await wait(1000);
 
-    // Instagram modal popup biasanya di-append di akhir `<body>` dan strukturnya berbeda (pakai <button>)
-    // Kita cari semua button dari bawah ke atas (karena modal di akhir DOM) yang tesknya konfirmasi
+    // Cari tombol konfirmasi di popup/modal
     const confirmBtn = await waitForElement(() => {
       const texts = ['unlike', 'remove', 'hapus', 'batal suka', 'confirm', 'konfirmasi'];
       const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
       
-      // Iterasi dari elemen paling baru/bawah
       for (let i = buttons.length - 1; i >= 0; i--) {
         const btn = buttons[i];
         const btnText = btn.textContent.trim().toLowerCase();
         
-        // Memastikan tombol modal konfirmasi (bukan tombol pertama tadi)
         if (texts.some(t => btnText === t || btnText.includes(t)) && btn !== unlikeBtn) {
-          // Tombol konfirmasi popup biasanya berjenis Tipe Button asli 
-          if (btn.tagName === 'BUTTON') {
-             return btn;
-          }
-          // Kembalikan asalkan dia beda dengan awal (fallback jika div)
+          if (btn.tagName === 'BUTTON') return btn;
           return btn;
         }
       }
@@ -533,38 +554,181 @@
       log('Konfirmasi popup berhasil diklik', 'success');
     }
 
-    await wait(2000); // Tunggu proses API selesai
+    await wait(2000);
     return true;
   }
 
   /**
+   * Cek apakah halaman menunjukkan state KOSONG
+   * Mengecek berbagai indikator empty state dari DOM bloks Instagram
+   */
+  function isPageEmpty() {
+    // Cek 1: aria-label "Tidak ada hasil" / "No results" (paling akurat)
+    const allLabeled = document.querySelectorAll('[aria-label]');
+    for (const el of allLabeled) {
+      const label = (el.getAttribute('aria-label') || '').toLowerCase();
+      if (label.includes('tidak ada hasil') || label.includes('no results')) {
+        log('Empty: terdeteksi aria-label "Tidak ada hasil"', 'info');
+        return true;
+      }
+    }
+
+    // Cek 2: Teks "Tidak ada hasil" di semua span (termasuk non-bloks)
+    const allSpans = document.querySelectorAll('span');
+    for (const span of allSpans) {
+      const text = span.textContent.trim();
+      if (text === 'Tidak ada hasil' || text === 'No results') {
+        log('Empty: terdeteksi teks "Tidak ada hasil"', 'info');
+        return true;
+      }
+    }
+
+    // Cek 3: Icon error__outline (ikon besar 96px saat kosong)
+    const allIcons = document.querySelectorAll('div[data-bloks-name="ig.components.Icon"]');
+    for (const icon of allIcons) {
+      const mask = icon.style.maskImage || icon.style.webkitMaskImage || '';
+      if (mask.includes('error__outline')) {
+        log('Empty: terdeteksi icon error__outline', 'info');
+        return true;
+      }
+    }
+
+    // Cek 4: "0 dipilih" text + tidak ada checkbox (mode Select tapi kosong)
+    const checkboxes = document.querySelectorAll('div[data-testid="bulk_action_checkbox"]');
+    if (checkboxes.length === 0) {
+      for (const span of allSpans) {
+        const text = span.textContent.trim();
+        if (text === '0 dipilih' || text === '0 selected') {
+          log('Empty: terdeteksi "0 dipilih" tanpa checkbox', 'info');
+          return true;
+        }
+      }
+    }
+
+    // Cek 5: Teks "Kami tidak dapat menemukan aktivitas"
+    for (const span of allSpans) {
+      const text = span.textContent.trim().toLowerCase();
+      if (text.includes('tidak dapat menemukan aktivitas') || text.includes('cannot find activity')) {
+        log('Empty: terdeteksi teks aktivitas kosong', 'info');
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Hitung jumlah postingan yang terlihat di halaman
+   * Prioritaskan pengecekan bulk_action_checkbox (paling akurat)
+   */
+  function countVisiblePosts() {
+    // Cek empty state dulu
+    if (isPageEmpty()) return 0;
+
+    // Paling akurat: hitung bulk_action_checkbox (hanya ada di grid postingan)
+    const checkboxes = document.querySelectorAll('div[data-testid="bulk_action_checkbox"]');
+    if (checkboxes.length > 0) return checkboxes.length;
+
+    // Hitung thumbnail postingan (harus punya src CDN Instagram/Facebook)
+    const images = document.querySelectorAll('img[data-bloks-name="bk.components.Image"]');
+    let count = 0;
+    for (const img of images) {
+      // Hanya hitung jika src mengandung CDN dan cache key (pasti thumbnail postingan)
+      if (img.src && (img.src.includes('fbcdn.net') || img.src.includes('cdninstagram')) && img.src.includes('_nc_')) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Cek apakah tombol Select/Pilih masih ada
+   */
+  function isSelectButtonAvailable() {
+    return !!(findButtonByText('Select') || findButtonByText('Pilih'));
+  }
+
+  /**
    * Main process: run one batch
+   * Returns: true (lanjut), 'empty' (postingan habis), false (error/stopped)
    */
   async function runBatch() {
     const batchSize = state.settings.batchSize;
 
     log(`=== Batch ${state.stats.batches + 1} dimulai ===`, 'info');
 
+    // === CEK AWAL ===
+    await wait(1500);
+    
+    if (isPageEmpty()) {
+      log('Halaman kosong (empty state terdeteksi). Proses selesai!', 'success');
+      return 'empty';
+    }
+
+    const visiblePosts = countVisiblePosts();
+    const selectAvailable = isSelectButtonAvailable();
+    
+    log(`Postingan: ${visiblePosts}, Tombol Select: ${selectAvailable ? 'ada' : 'tidak'}`, 'info');
+    
+    if (visiblePosts === 0 && !selectAvailable) {
+      log('Tidak ada postingan dan tombol Select. Proses selesai!', 'success');
+      return 'empty';
+    }
+
     // Step 1: Click Select
     const selectClicked = await clickSelectButton();
-    if (!selectClicked || state.isStopped) return false;
+    if (!selectClicked) {
+      if (state.isStopped) return false;
+      log('Tombol Select tidak ditemukan. Mungkin postingan sudah habis.', 'warn');
+      return 'empty';
+    }
+    if (state.isStopped) return false;
 
     await wait(state.settings.delay * 1000);
+    if (state.isStopped) return false;
+
+    // === CEK SETELAH MASUK MODE SELECT ===
+    // Ini yang paling penting: jika tidak ada bulk_action_checkbox → pasti kosong
+    const checkboxCount = document.querySelectorAll('div[data-testid="bulk_action_checkbox"]').length;
+    log(`Checkbox terdeteksi setelah Select: ${checkboxCount}`, 'info');
+    
+    if (checkboxCount === 0) {
+      log('Tidak ada checkbox postingan setelah masuk mode Select. Halaman kosong!', 'success');
+      // Klik Batalkan untuk keluar select mode
+      const cancelBtn = findButtonByText('Batalkan') || findButtonByText('Cancel');
+      if (cancelBtn) simulateClick(cancelBtn);
+      return 'empty';
+    }
+
+    if (isPageEmpty()) {
+      log('Setelah Select, halaman terdeteksi kosong.', 'success');
+      return 'empty';
+    }
 
     // Step 2: Select posts
     const selectedCount = await selectPosts(batchSize);
-    if (selectedCount === 0 || state.isStopped) {
-      if (selectedCount === 0) {
-        log('Tidak ada postingan yang dipilih. Proses selesai.', 'warn');
-      }
-      return false;
+    if (state.isStopped) return false;
+    if (selectedCount === 0) {
+      log('Tidak ada postingan yang berhasil dipilih. Postingan mungkin sudah habis.', 'warn');
+      return 'empty';
     }
 
     await wait(state.settings.delay * 1000);
+    if (state.isStopped) return false;
 
     // Step 3: Click Unlike
     const unlikeClicked = await clickUnlikeButton();
-    if (!unlikeClicked || state.isStopped) return false;
+    if (!unlikeClicked) {
+      if (state.isStopped) return false;
+      // Jika unlike gagal, cek apakah halaman sebenarnya kosong
+      if (isPageEmpty()) {
+        log('Unlike gagal dan halaman terdeteksi kosong.', 'success');
+        return 'empty';
+      }
+      log('Unlike gagal.', 'error');
+      return false;
+    }
+    if (state.isStopped) return false;
 
     // Update stats
     state.stats.unliked += selectedCount;
@@ -581,6 +745,35 @@
     }
 
     log(`=== Batch ${state.stats.batches} selesai: ${selectedCount} post di-unlike ===`, 'success');
+
+    // === CEK SETELAH UNLIKE ===
+    await wait(2500);
+    
+    if (isPageEmpty()) {
+      log('Setelah unlike, halaman kosong. Semua sudah di-unlike!', 'success');
+      return 'empty';
+    }
+
+    const remaining = countVisiblePosts();
+    log(`Postingan tersisa: ${remaining}`, 'info');
+    
+    if (remaining === 0) {
+      log('Mencoba scroll untuk cek postingan baru...', 'info');
+      await scrollDown();
+      await wait(2500);
+      
+      if (isPageEmpty()) {
+        log('Setelah scroll, halaman kosong. Semua sudah di-unlike!', 'success');
+        return 'empty';
+      }
+      
+      const afterScroll = countVisiblePosts();
+      if (afterScroll === 0) {
+        log('Tidak ada postingan baru. Semua sudah di-unlike!', 'success');
+        return 'empty';
+      }
+      log(`Ditemukan ${afterScroll} postingan baru setelah scroll.`, 'info');
+    }
 
     return true;
   }
@@ -608,21 +801,24 @@
     log('Proses InstaSwipe dimulai!', 'info');
 
     // Run batches
-    let continueProcessing = true;
-    while (continueProcessing && !state.isStopped) {
+    let batchResult = true;
+    while (batchResult === true && !state.isStopped) {
       if (state.isPaused) {
         await wait(500);
         continue;
       }
 
-      continueProcessing = await runBatch();
+      batchResult = await runBatch();
 
-      if (continueProcessing && !state.isStopped) {
+      if (batchResult === 'empty') {
+        break;
+      }
+
+      if (batchResult === true && !state.isStopped) {
         log(`Menunggu ${state.settings.delay * 2} detik sebelum batch berikutnya...`);
         const waited = await wait(state.settings.delay * 2000);
-        if (!waited) break; // stopped during wait
+        if (!waited) break;
 
-        // Scroll to top for next batch
         window.scrollTo({ top: 0, behavior: 'smooth' });
         await wait(1500);
       }
@@ -633,10 +829,20 @@
     if (state.isStopped) {
       setStatus('stopped');
       log(`Proses dihentikan. Total: ${state.stats.unliked} post di-unlike dalam ${state.stats.batches} batch.`, 'warn');
+    } else if (batchResult === 'empty') {
+      setStatus('finished');
+      log(`✅ Semua postingan yang disukai sudah berhasil di-unlike! Total: ${state.stats.unliked} post dalam ${state.stats.batches} batch.`, 'success');
     } else {
       setStatus('finished');
       log(`Proses selesai! Total: ${state.stats.unliked} post di-unlike dalam ${state.stats.batches} batch.`, 'success');
     }
+
+    // Kirim sisa log data terakhir
+    if (state.logData.length > 0) {
+      sendToPopup({ type: 'log_data', data: [...state.logData] });
+      state.logData = [];
+    }
+
     updateStats();
   }
 
@@ -663,6 +869,7 @@
       case 'stop':
         state.isStopped = true;
         state.isPaused = false;
+        log('Menghentikan proses...', 'warn');
         sendResponse({ status: 'stopped' });
         break;
 
