@@ -166,14 +166,28 @@
 
   function updateStats() {
     sendToPopup({ type: 'stats_update', data: { ...state.stats } });
+    // Persist stats ke storage
+    chrome.storage.local.set({ stats: { ...state.stats } });
   }
 
   function updateProgress(current, total) {
     sendToPopup({ type: 'progress', current, total });
   }
 
+  /**
+   * Simpan status proses ke storage agar popup bisa membacanya saat dibuka ulang
+   */
   function setStatus(status) {
     sendToPopup({ type: 'status_change', status });
+    // Persist process status ke storage
+    chrome.storage.local.set({ 
+      processStatus: status,
+      processState: {
+        isRunning: state.isRunning,
+        isPaused: state.isPaused,
+        isStopped: state.isStopped,
+      }
+    });
   }
 
   // ====== Core Logic ======
@@ -237,10 +251,12 @@
 
       for (const item of postItems) {
         if (selectedCount >= maxCount || state.isStopped) break;
-        if (state.isPaused) {
+        
+        // Tunggu sampai resume jika sedang di-pause (jangan skip item)
+        while (state.isPaused && !state.isStopped) {
           await wait(500);
-          continue;
         }
+        if (state.isStopped) break;
 
         const postKey = getPostKey(item);
         if (state.selectedPosts.has(postKey)) continue;
@@ -667,25 +683,37 @@
 
     const visiblePosts = countVisiblePosts();
     const selectAvailable = isSelectButtonAvailable();
+    const existingCheckboxes = document.querySelectorAll('div[data-testid="bulk_action_checkbox"]').length;
     
-    log(`Postingan: ${visiblePosts}, Tombol Select: ${selectAvailable ? 'ada' : 'tidak'}`, 'info');
+    log(`Postingan: ${visiblePosts}, Tombol Select: ${selectAvailable ? 'ada' : 'tidak'}, Checkbox: ${existingCheckboxes}`, 'info');
     
-    if (visiblePosts === 0 && !selectAvailable) {
+    if (visiblePosts === 0 && !selectAvailable && existingCheckboxes === 0) {
       log('Tidak ada postingan dan tombol Select. Proses selesai!', 'success');
       return 'empty';
     }
 
-    // Step 1: Click Select
-    const selectClicked = await clickSelectButton();
-    if (!selectClicked) {
-      if (state.isStopped) return false;
-      log('Tombol Select tidak ditemukan. Mungkin postingan sudah habis.', 'warn');
-      return 'empty';
+    // === CEK APAKAH SUDAH DALAM SELECT MODE ===
+    // Jika checkbox sudah ada tapi tombol Select tidak ada → halaman sudah dalam select mode
+    // Ini terjadi jika batch sebelumnya terinterupsi (misal: pause/resume)
+    let alreadyInSelectMode = false;
+    if (!selectAvailable && existingCheckboxes > 0) {
+      log('Sudah dalam mode Select (dari batch sebelumnya). Skip klik Select.', 'info');
+      alreadyInSelectMode = true;
     }
-    if (state.isStopped) return false;
 
-    await wait(state.settings.delay * 1000);
-    if (state.isStopped) return false;
+    if (!alreadyInSelectMode) {
+      // Step 1: Click Select
+      const selectClicked = await clickSelectButton();
+      if (!selectClicked) {
+        if (state.isStopped) return false;
+        log('Tombol Select tidak ditemukan. Mungkin postingan sudah habis.', 'warn');
+        return 'empty';
+      }
+      if (state.isStopped) return false;
+
+      await wait(state.settings.delay * 1000);
+      if (state.isStopped) return false;
+    }
 
     // === CEK SETELAH MASUK MODE SELECT ===
     // Ini yang paling penting: jika tidak ada bulk_action_checkbox → pasti kosong
@@ -874,7 +902,29 @@
         break;
 
       case 'ping':
-        sendResponse({ status: 'alive', isRunning: state.isRunning });
+        sendResponse({ 
+          status: 'alive', 
+          isRunning: state.isRunning,
+          isPaused: state.isPaused,
+          isStopped: state.isStopped,
+          stats: { ...state.stats },
+        });
+        break;
+
+      case 'getState':
+        // Mengembalikan state lengkap untuk sinkronisasi popup
+        let currentStatus = 'idle';
+        if (state.isRunning && !state.isPaused) currentStatus = 'running';
+        else if (state.isRunning && state.isPaused) currentStatus = 'paused';
+        else if (state.isStopped) currentStatus = 'stopped';
+        
+        sendResponse({
+          status: currentStatus,
+          isRunning: state.isRunning,
+          isPaused: state.isPaused,
+          isStopped: state.isStopped,
+          stats: { ...state.stats },
+        });
         break;
     }
     return true;

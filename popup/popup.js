@@ -41,13 +41,14 @@
     await loadSettings();
     await checkPageStatus();
     setupEventListeners();
-    addLog('Extension siap. Klik Start untuk memulai.', 'info');
+    // Sinkronisasi state dari content script (jika proses masih berjalan)
+    await syncStateFromContentScript();
   }
 
   // ====== Settings ======
   async function loadSettings() {
     try {
-      const data = await chrome.storage.local.get(['batchSize', 'delay', 'logData', 'stats']);
+      const data = await chrome.storage.local.get(['batchSize', 'delay', 'logData', 'stats', 'processStatus']);
       if (data.batchSize) el.batchSize.value = data.batchSize;
       if (data.delay) el.delay.value = data.delay;
       if (data.logData) {
@@ -57,6 +58,10 @@
       }
       if (data.stats) {
         updateStats(data.stats);
+      }
+      // Restore process status dari storage sebagai fallback awal
+      if (data.processStatus && data.processStatus !== 'idle') {
+        setStatus(data.processStatus);
       }
     } catch (e) {
       console.error('Error loading settings:', e);
@@ -89,6 +94,88 @@
       }
     } catch (e) {
       el.pageStatus.textContent = '—';
+    }
+  }
+
+  /**
+   * Sinkronisasi state dari content script yang sedang berjalan.
+   * Popup akan mengirim 'getState' ke content script, 
+   * jika content script merespons maka UI akan diperbarui.
+   * Jika tidak merespons (misal tab sudah ditutup), fallback ke storage.
+   */
+  async function syncStateFromContentScript() {
+    try {
+      // Cari tab Instagram Likes yang mungkin masih menjalankan proses
+      const tabs = await chrome.tabs.query({ url: '*://www.instagram.com/your_activity/interactions/likes*' });
+      
+      if (tabs.length === 0) {
+        // Tidak ada tab Likes terbuka → reset status ke idle jika stored status bukan finished/stopped
+        const data = await chrome.storage.local.get(['processStatus']);
+        if (data.processStatus === 'running' || data.processStatus === 'paused') {
+          // Proses seharusnya berjalan tapi tab sudah ditutup → tandai stopped
+          setStatus('stopped');
+          await chrome.storage.local.set({ processStatus: 'stopped' });
+          addLog('Tab Instagram Likes sudah ditutup. Proses terhenti.', 'warn');
+        } else {
+          addLog('Extension siap. Klik Start untuk memulai.', 'info');
+        }
+        return;
+      }
+
+      likesTabId = tabs[0].id;
+
+      // Coba ping content script untuk mendapatkan state real-time
+      try {
+        const response = await chrome.tabs.sendMessage(tabs[0].id, { action: 'getState' });
+        
+        if (response && response.status) {
+          setStatus(response.status);
+          
+          if (response.stats) {
+            updateStats(response.stats);
+          }
+
+          // Tampilkan log sesuai status
+          switch (response.status) {
+            case 'running':
+              addLog('Proses sedang berjalan...', 'info');
+              break;
+            case 'paused':
+              addLog('Proses sedang dijeda. Klik Resume untuk melanjutkan.', 'warn');
+              break;
+            case 'stopped':
+              addLog('Proses telah dihentikan.', 'warn');
+              break;
+            case 'finished':
+              addLog('Proses telah selesai.', 'success');
+              break;
+            default:
+              addLog('Extension siap. Klik Start untuk memulai.', 'info');
+          }
+          return;
+        }
+      } catch (e) {
+        // Content script tidak merespons (mungkin belum di-inject atau tab di-reload)
+        console.log('Content script tidak merespons:', e.message);
+      }
+
+      // Fallback: gunakan status dari storage
+      const data = await chrome.storage.local.get(['processStatus']);
+      if (data.processStatus && data.processStatus !== 'idle') {
+        // Content script tidak merespons tapi status tersimpan aktif → mungkin tab di-reload
+        if (data.processStatus === 'running' || data.processStatus === 'paused') {
+          setStatus('stopped');
+          await chrome.storage.local.set({ processStatus: 'stopped' });
+          addLog('Proses terhenti karena halaman di-reload. Klik Start untuk memulai ulang.', 'warn');
+        } else {
+          addLog('Extension siap. Klik Start untuk memulai.', 'info');
+        }
+      } else {
+        addLog('Extension siap. Klik Start untuk memulai.', 'info');
+      }
+    } catch (e) {
+      console.error('Error syncing state:', e);
+      addLog('Extension siap. Klik Start untuk memulai.', 'info');
     }
   }
 
@@ -205,6 +292,9 @@
     }
 
     try {
+      // Reset status di storage saat mulai proses baru
+      await chrome.storage.local.set({ processStatus: 'running' });
+      
       const tabId = await ensureLikesTab();
 
       await chrome.tabs.sendMessage(tabId, {
@@ -302,6 +392,16 @@
       el.statusDot.classList.add(status);
     }
 
+    // Helper: update label teks tombol (text node setelah SVG icon)
+    function setBtnLabel(btn, label) {
+      for (const node of btn.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0) {
+          node.textContent = `\n          ${label}\n        `;
+          return;
+        }
+      }
+    }
+    
     switch (status) {
       case 'running':
         el.btnStart.disabled = true;
@@ -309,11 +409,13 @@
         el.btnStop.disabled = false;
         el.batchSize.disabled = true;
         el.delay.disabled = true;
+        setBtnLabel(el.btnPause, 'Pause');
         break;
       case 'paused':
         el.btnStart.disabled = true;
         el.btnPause.disabled = false;
         el.btnStop.disabled = false;
+        setBtnLabel(el.btnPause, 'Resume');
         break;
       case 'stopped':
       case 'finished':
@@ -323,6 +425,7 @@
         el.btnStop.disabled = true;
         el.batchSize.disabled = false;
         el.delay.disabled = false;
+        setBtnLabel(el.btnPause, 'Pause');
         break;
     }
   }
