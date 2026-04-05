@@ -456,16 +456,32 @@
    */
   function collectPostData(element) {
     try {
-      // Ambil thumbnail dari img
-      const img = element.querySelector('img[data-bloks-name="bk.components.Image"]') ||
-                  element.querySelector('img');
+      // element adalah clickTarget (seringkali hanya merujuk ke elemen label/checkbox)
+      // Karena struktur DOM bloks Instagram, img & icon mungkin tidak ada di dalam element secara langsung.
+      // Kita perlu naik beberapa level dan mencari img dari kontainer parent yang lebih luas (grid cell).
+      let searchContext = element;
+      let img = searchContext.querySelector('img[data-bloks-name="bk.components.Image"]') || searchContext.querySelector('img');
+
+      // Jika img tidak ditemukan, naik level parent (max 6 level)
+      if (!img) {
+        let parent = element.parentElement;
+        for (let i = 0; i < 6; i++) {
+          if (!parent) break;
+          img = parent.querySelector('img[data-bloks-name="bk.components.Image"]') || parent.querySelector('img');
+          if (img) {
+            searchContext = parent;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+      }
       
-      // Deteksi tipe: reel atau post
+      // Deteksi tipe: reel atau post menggunakan searchContext
       let type = 'post';
-      const icons = element.querySelectorAll('div[data-bloks-name="ig.components.Icon"]');
+      const icons = searchContext.querySelectorAll('div[data-bloks-name="ig.components.Icon"]');
       for (const icon of icons) {
         const maskImage = icon.style.maskImage || icon.style.webkitMaskImage || '';
-        if (maskImage.includes('reels__filled')) {
+        if (maskImage.includes('reels__filled') || maskImage.includes('reels')) {
           type = 'reel';
           break;
         }
