@@ -12,7 +12,17 @@
   // ====== DOM Elements ======
   const el = {
     batchSize: document.getElementById("batchSize"),
-    delay: document.getElementById("delay"),
+    batchDelayMin: document.getElementById("batchDelayMin"),
+    batchDelayMax: document.getElementById("batchDelayMax"),
+    batchDelayEnabled: document.getElementById("batchDelayEnabled"),
+    batchDelayGroup: document.getElementById("batchDelayGroup"),
+    batchDelayDesc: document.getElementById("batchDelayDesc"),
+    coffeeEvery: document.getElementById("coffeeEvery"),
+    coffeeDelayMin: document.getElementById("coffeeDelayMin"),
+    coffeeDelayMax: document.getElementById("coffeeDelayMax"),
+    coffeeBreakEnabled: document.getElementById("coffeeBreakEnabled"),
+    coffeeBreakGroup: document.getElementById("coffeeBreakGroup"),
+    coffeeBreakDesc: document.getElementById("coffeeBreakDesc"),
     btnStart: document.getElementById("btnStart"),
     btnPause: document.getElementById("btnPause"),
     btnStop: document.getElementById("btnStop"),
@@ -30,6 +40,10 @@
     progressContainer: document.getElementById("progressContainer"),
     progressFill: document.getElementById("progressFill"),
     progressText: document.getElementById("progressText"),
+    sessionLimitEnabled: document.getElementById("sessionLimitEnabled"),
+    sessionLimitGroup: document.getElementById("sessionLimitGroup"),
+    sessionLimit: document.getElementById("sessionLimit"),
+    sessionLimitDesc: document.getElementById("sessionLimitDesc"),
   };
 
   // ====== State ======
@@ -51,13 +65,55 @@
     try {
       const data = await chrome.storage.local.get([
         "batchSize",
-        "delay",
+        "batchDelayEnabled",
+        "batchDelayMin",
+        "batchDelayMax",
+        "coffeeBreakEnabled",
+        "coffeeEvery",
+        "coffeeDelayMin",
+        "coffeeDelayMax",
         "logData",
         "stats",
         "processStatus",
+        "sessionLimitEnabled",
+        "sessionLimit",
       ]);
-      if (data.batchSize) el.batchSize.value = data.batchSize;
-      if (data.delay) el.delay.value = data.delay;
+
+      // Restore batchSize select
+      if (data.batchSize) {
+        const opt = el.batchSize.querySelector(`option[value="${data.batchSize}"]`);
+        if (opt) el.batchSize.value = data.batchSize;
+      }
+
+      // Restore delay settings
+      if (data.batchDelayEnabled === true) {
+        el.batchDelayEnabled.checked = true;
+        el.batchDelayGroup.style.display = "block";
+        el.batchDelayDesc.textContent = "Jeda acak antara setiap batch";
+      }
+      if (data.batchDelayMin) el.batchDelayMin.value = data.batchDelayMin;
+      if (data.batchDelayMax) el.batchDelayMax.value = data.batchDelayMax;
+
+      if (data.coffeeBreakEnabled === true) {
+        el.coffeeBreakEnabled.checked = true;
+        el.coffeeBreakGroup.style.display = "block";
+        el.coffeeBreakDesc.textContent = "Istirahat panjang setiap N batch";
+      }
+      if (data.coffeeEvery)   el.coffeeEvery.value   = data.coffeeEvery;
+      if (data.coffeeDelayMin) el.coffeeDelayMin.value = data.coffeeDelayMin;
+      if (data.coffeeDelayMax) el.coffeeDelayMax.value = data.coffeeDelayMax;
+
+      // Restore session limit settings
+      if (data.sessionLimitEnabled === true) {
+        el.sessionLimitEnabled.checked = true;
+        el.sessionLimitGroup.classList.add("visible");
+        el.sessionLimitDesc.textContent = `Batasi hingga ${data.sessionLimit || 300} post`;
+      }
+      // Restore nilai select: cari option yang cocok
+      if (data.sessionLimit) {
+        const opt = el.sessionLimit.querySelector(`option[value="${data.sessionLimit}"]`);
+        if (opt) el.sessionLimit.value = data.sessionLimit;
+      }
       if (data.logData) {
         logData = data.logData;
         updateLogCount();
@@ -77,9 +133,22 @@
 
   async function saveSettings() {
     try {
+      const minDelay = parseInt(el.batchDelayMin.value) || 1;
+      const maxDelay = parseInt(el.batchDelayMax.value) || 3;
+      const coffeeEvery   = parseInt(el.coffeeEvery.value)    || 5;
+      const coffeeMin     = parseInt(el.coffeeDelayMin.value)  || 30;
+      const coffeeMax     = parseInt(el.coffeeDelayMax.value)  || 60;
       await chrome.storage.local.set({
-        batchSize: parseInt(el.batchSize.value),
-        delay: parseInt(el.delay.value),
+        batchSize:       parseInt(el.batchSize.value),
+        batchDelayEnabled: el.batchDelayEnabled.checked,
+        batchDelayMin:   Math.min(minDelay, maxDelay),
+        batchDelayMax:   Math.max(minDelay, maxDelay),
+        coffeeBreakEnabled: el.coffeeBreakEnabled.checked,
+        coffeeEvery,
+        coffeeDelayMin:  Math.min(coffeeMin, coffeeMax),
+        coffeeDelayMax:  Math.max(coffeeMin, coffeeMax),
+        sessionLimitEnabled: el.sessionLimitEnabled.checked,
+        sessionLimit:    parseInt(el.sessionLimit.value),
       });
     } catch (e) {
       console.error("Error saving settings:", e);
@@ -211,8 +280,43 @@
 
   // ====== Event Listeners ======
   function setupEventListeners() {
-    el.batchSize.addEventListener("change", saveSettings);
-    el.delay.addEventListener("change", saveSettings);
+    // Auto-save saat setting berubah
+    const saveOnChange = ["batchSize", "batchDelayMin", "batchDelayMax", "coffeeEvery", "coffeeDelayMin", "coffeeDelayMax"];
+    saveOnChange.forEach((id) => el[id].addEventListener("change", saveSettings));
+
+    // Toggle Batch Delay
+    el.batchDelayEnabled.addEventListener("change", () => {
+      const isEnabled = el.batchDelayEnabled.checked;
+      el.batchDelayGroup.style.display = isEnabled ? "block" : "none";
+      el.batchDelayDesc.textContent = isEnabled ? "Jeda acak antara setiap batch" : "Nonaktif";
+      saveSettings();
+    });
+
+    // Toggle Coffee Break
+    el.coffeeBreakEnabled.addEventListener("change", () => {
+      const isEnabled = el.coffeeBreakEnabled.checked;
+      el.coffeeBreakGroup.style.display = isEnabled ? "block" : "none";
+      el.coffeeBreakDesc.textContent = isEnabled ? "Istirahat panjang setiap N batch" : "Nonaktif";
+      saveSettings();
+    });
+
+    el.sessionLimit.addEventListener("change", () => {
+      el.sessionLimitDesc.textContent = `Batasi hingga ${el.sessionLimit.value} post`;
+      saveSettings();
+    });
+
+    // Toggle session limit on/off
+    el.sessionLimitEnabled.addEventListener("change", () => {
+      const isEnabled = el.sessionLimitEnabled.checked;
+      if (isEnabled) {
+        el.sessionLimitGroup.classList.add("visible");
+        el.sessionLimitDesc.textContent = `Batasi hingga ${el.sessionLimit.value} post`;
+      } else {
+        el.sessionLimitGroup.classList.remove("visible");
+        el.sessionLimitDesc.textContent = "Nonstop — proses tanpa batas";
+      }
+      saveSettings();
+    });
 
     el.btnStart.addEventListener("click", handleStart);
     el.btnPause.addEventListener("click", handlePause);
@@ -323,15 +427,19 @@
   }
 
   async function handleStart() {
-    const batchSize = parseInt(el.batchSize.value);
-    const delay = parseInt(el.delay.value);
+    const batchSize     = parseInt(el.batchSize.value);
+    const batchDelayEnabled = el.batchDelayEnabled.checked;
+    const batchDelayMin = parseInt(el.batchDelayMin.value) || 1;
+    const batchDelayMax = parseInt(el.batchDelayMax.value) || 3;
+    const coffeeBreakEnabled = el.coffeeBreakEnabled.checked;
+    const coffeeEvery   = parseInt(el.coffeeEvery.value)   || 5;
+    const coffeeDelayMin = parseInt(el.coffeeDelayMin.value) || 30;
+    const coffeeDelayMax = parseInt(el.coffeeDelayMax.value) || 60;
+    const isLimitEnabled = el.sessionLimitEnabled.checked;
+    const sessionLimit  = isLimitEnabled ? parseInt(el.sessionLimit.value) : 0;
 
-    if (batchSize < 10 || batchSize > 100) {
-      addLog("Batch size harus antara 10-100", "error");
-      return;
-    }
-    if (delay < 1 || delay > 10) {
-      addLog("Delay harus antara 1-10 detik", "error");
+    if (batchSize < 10 || batchSize > 50) {
+      addLog("Batch size harus antara 10-50", "error");
       return;
     }
 
@@ -343,12 +451,25 @@
 
       await chrome.tabs.sendMessage(tabId, {
         action: "start",
-        settings: { batchSize, delay },
+        settings: {
+          batchSize,
+          batchDelayEnabled,
+          batchDelayMin: Math.min(batchDelayMin, batchDelayMax),
+          batchDelayMax: Math.max(batchDelayMin, batchDelayMax),
+          coffeeBreakEnabled,
+          coffeeEvery,
+          coffeeDelayMin: Math.min(coffeeDelayMin, coffeeDelayMax),
+          coffeeDelayMax: Math.max(coffeeDelayMin, coffeeDelayMax),
+          sessionLimit,
+        },
       });
 
       setStatus("running");
+      const limitInfo = isLimitEnabled ? `limit: ${sessionLimit} post` : "nonstop";
+      const delayInfo = batchDelayEnabled ? `delay: ${Math.min(batchDelayMin,batchDelayMax)}-${Math.max(batchDelayMin,batchDelayMax)}s` : "delay off";
+      const coffeeInfo = coffeeBreakEnabled ? `coffee: tiap ${coffeeEvery} batch` : "coffee off";
       addLog(
-        `Memulai proses unlike (batch: ${batchSize}, delay: ${delay}s)`,
+        `Mulai (batch: ${batchSize}, ${delayInfo}, ${coffeeInfo}, ${limitInfo})`,
         "info",
       );
     } catch (e) {
@@ -456,13 +577,17 @@
       }
     }
 
+    const settingInputs = [
+      el.batchSize, el.batchDelayMin, el.batchDelayMax,
+      el.coffeeEvery, el.coffeeDelayMin, el.coffeeDelayMax,
+    ];
+
     switch (status) {
       case "running":
         el.btnStart.disabled = true;
         el.btnPause.disabled = false;
         el.btnStop.disabled = false;
-        el.batchSize.disabled = true;
-        el.delay.disabled = true;
+        settingInputs.forEach((i) => { if (i) i.disabled = true; });
         setBtnLabel(el.btnPause, "Pause");
         break;
       case "paused":
@@ -477,8 +602,7 @@
         el.btnStart.disabled = false;
         el.btnPause.disabled = true;
         el.btnStop.disabled = true;
-        el.batchSize.disabled = false;
-        el.delay.disabled = false;
+        settingInputs.forEach((i) => { if (i) i.disabled = false; });
         setBtnLabel(el.btnPause, "Pause");
         break;
     }

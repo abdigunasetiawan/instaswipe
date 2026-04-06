@@ -47,22 +47,120 @@
         Pengaturan
       </h2>
       <div class="settings-grid">
-        <div class="setting-item">
+
+        <!-- Batch Size -->
+        <div class="setting-item setting-item--full">
           <label for="batchSize">Batch Size</label>
           <div class="input-group">
-            <input type="number" id="batchSize" min="10" max="100" value="100" step="10">
-            <span class="input-hint">10-100 post</span>
+            <select id="batchSize">
+              <option value="10">10 post</option>
+              <option value="20">20 post</option>
+              <option value="30">30 post</option>
+              <option value="40">40 post</option>
+              <option value="50" selected>50 post</option>
+            </select>
+            <span class="input-hint">Jumlah post yang diproses per batch</span>
           </div>
         </div>
-        <div class="setting-item">
-          <label for="delay">Delay</label>
-          <div class="input-group">
-            <input type="number" id="delay" min="1" max="10" value="3" step="1">
-            <span class="input-hint">1-10 detik</span>
+
+        <!-- Batch Delay -->
+        <div class="setting-item setting-item--full">
+          <div class="adv-card">
+            <div class="adv-card-header">
+              <div class="adv-card-info">
+                <span class="adv-card-title">⏳ Delay Antar Batch</span>
+                <span class="adv-card-desc" id="batchDelayDesc">Nonaktif</span>
+              </div>
+              <label class="toggle-switch" title="Aktifkan delay antar batch">
+                <input type="checkbox" id="batchDelayEnabled">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="adv-card-body" id="batchDelayGroup" style="display: none;">
+              <div class="range-row">
+                <div class="range-field">
+                  <label for="batchDelayMin">Min (detik)</label>
+                  <input type="number" id="batchDelayMin" min="1" max="60" value="1" step="1">
+                </div>
+                <div class="range-sep">—</div>
+                <div class="range-field">
+                  <label for="batchDelayMax">Max (detik)</label>
+                  <input type="number" id="batchDelayMax" min="1" max="120" value="3" step="1">
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+
+        <!-- Coffee Break -->
+        <div class="setting-item setting-item--full">
+          <div class="adv-card">
+            <div class="adv-card-header">
+              <div class="adv-card-info">
+                <span class="adv-card-title">☕ Coffee Break</span>
+                <span class="adv-card-desc" id="coffeeBreakDesc">Nonaktif</span>
+              </div>
+              <label class="toggle-switch" title="Aktifkan coffee break">
+                <input type="checkbox" id="coffeeBreakEnabled">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="adv-card-body" id="coffeeBreakGroup" style="display: none;">
+              <div class="range-row">
+                <div class="range-field range-field--narrow">
+                  <label for="coffeeEvery">Setiap</label>
+                  <div class="input-with-unit">
+                    <input type="number" id="coffeeEvery" min="1" max="50" value="5" step="1">
+                    <span class="unit-label">batch</span>
+                  </div>
+                </div>
+                <div class="range-sep">|</div>
+                <div class="range-field">
+                  <label for="coffeeDelayMin">Min (detik)</label>
+                  <input type="number" id="coffeeDelayMin" min="5" max="300" value="30" step="1">
+                </div>
+                <div class="range-sep">—</div>
+                <div class="range-field">
+                  <label for="coffeeDelayMax">Max (detik)</label>
+                  <input type="number" id="coffeeDelayMax" min="5" max="600" value="60" step="1">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Session Limit card -->
+        <div class="setting-item setting-item--full">
+          <div class="session-limit-card">
+            <div class="session-limit-header">
+              <div class="session-limit-info">
+                <span class="session-limit-title">Session Limit</span>
+                <span class="session-limit-desc" id="sessionLimitDesc">Nonstop — proses tanpa batas</span>
+              </div>
+              <label class="toggle-switch" title="Aktifkan session limit">
+                <input type="checkbox" id="sessionLimitEnabled">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="session-limit-input" id="sessionLimitGroup">
+              <select id="sessionLimit">
+                <option value="50">50 post</option>
+                <option value="100">100 post</option>
+                <option value="200">200 post</option>
+                <option value="300" selected>300 post</option>
+                <option value="500">500 post</option>
+                <option value="1000">1.000 post</option>
+                <option value="2000">2.000 post</option>
+                <option value="5000">5.000 post</option>
+              </select>
+              <span class="input-hint">post maksimum per sesi</span>
+            </div>
+          </div>
+        </div>
+
       </div>
     </section>
+
 
     <!-- Controls -->
     <section class="controls-section">

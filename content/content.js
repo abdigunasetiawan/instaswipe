@@ -12,7 +12,17 @@
     isRunning: false,
     isPaused: false,
     isStopped: false,
-    settings: { batchSize: 100, delay: 3 },
+    settings: {
+      batchSize: 50,
+      batchDelayEnabled: false,
+      batchDelayMin: 1,
+      batchDelayMax: 3,
+      coffeeBreakEnabled: false,
+      coffeeEvery: 5,
+      coffeeDelayMin: 30,
+      coffeeDelayMax: 60,
+      sessionLimit: 0,
+    },
     stats: { unliked: 0, batches: 0, selected: 0 },
     logData: [],
     selectedPosts: new Set(),
@@ -296,7 +306,7 @@
 
         log('Melakukan scroll untuk memuat lebih banyak post...');
         await scrollDown();
-        await wait(state.settings.delay * 500);
+        await wait(1500);
       }
     }
 
@@ -551,7 +561,7 @@
       return false;
     }
 
-    await wait(state.settings.delay * 1000);
+    await wait(1500);
     const clicked = simulateClick(unlikeBtn);
 
     if (!clicked) {
@@ -727,7 +737,7 @@
       }
       if (state.isStopped) return false;
 
-      await wait(state.settings.delay * 1000);
+      await wait(1500);
       if (state.isStopped) return false;
     }
 
@@ -757,7 +767,7 @@
       return 'empty';
     }
 
-    await wait(state.settings.delay * 1000);
+    await wait(1500);
     if (state.isStopped) return false;
 
     // Step 3: Click Unlike
@@ -840,9 +850,14 @@
     state.logData = [];
     state.selectedPosts.clear();
 
+    const sessionLimit = state.settings.sessionLimit || 0; // 0 = nonstop
+
     setStatus('running');
     updateStats();
     log('Proses InstaSwipe dimulai!', 'info');
+    if (sessionLimit > 0) {
+      log(`Session limit: ${sessionLimit} post per sesi`, 'info');
+    }
 
     // Run batches
     let batchResult = true;
@@ -852,19 +867,52 @@
         continue;
       }
 
-      batchResult = await runBatch();
-
-      if (batchResult === 'empty') {
+      // === CEK SESSION LIMIT ===
+      if (sessionLimit > 0 && state.stats.unliked >= sessionLimit) {
+        log(`✅ Session limit tercapai: ${state.stats.unliked} post di-unlike. Proses dihentikan.`, 'success');
+        batchResult = 'limit';
         break;
       }
 
+      batchResult = await runBatch();
+
+      if (batchResult === 'empty') break;
+
       if (batchResult === true && !state.isStopped) {
-        log(`Menunggu ${state.settings.delay * 2} detik sebelum batch berikutnya...`);
-        const waited = await wait(state.settings.delay * 2000);
-        if (!waited) break;
+        // === CEK SESSION LIMIT SETELAH BATCH ===
+        if (sessionLimit > 0 && state.stats.unliked >= sessionLimit) {
+          log(`✅ Session limit tercapai: ${state.stats.unliked} post di-unlike. Proses dihentikan.`, 'success');
+          batchResult = 'limit';
+          break;
+        }
+
+        // === COFFEE BREAK ===
+        if (state.settings.coffeeBreakEnabled && state.stats.batches > 0 && state.stats.batches % state.settings.coffeeEvery === 0) {
+          const coffeeDelayMin = state.settings.coffeeDelayMin || 30;
+          const coffeeDelayMax = state.settings.coffeeDelayMax || 60;
+          const coffeeMs = (coffeeDelayMin + Math.random() * (coffeeDelayMax - coffeeDelayMin)) * 1000;
+          log(`☕ Coffee break setelah ${state.settings.coffeeEvery} batch... (${Math.round(coffeeMs / 1000)} detik)`, 'info');
+          const waited = await wait(coffeeMs);
+          if (!waited) break;
+        } 
+        // === DELAY ACAK ANTAR BATCH ===
+        else if (state.settings.batchDelayEnabled) {
+          const delayMin = state.settings.batchDelayMin || 1;
+          const delayMax = state.settings.batchDelayMax || 3;
+          const delayMs  = (delayMin + Math.random() * (delayMax - delayMin)) * 1000;
+          log(`⏳ Jeda ${(delayMs / 1000).toFixed(1)} detik sebelum batch berikutnya...`, 'info');
+          const waited = await wait(delayMs);
+          if (!waited) break;
+        } 
+        // === JIKA KEDUANYA NONAKTIF ===
+        else {
+          log(`⏳ Menyiapkan batch berikutnya...`, 'info');
+          const waited = await wait(1000);
+          if (!waited) break;
+        }
 
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        await wait(1500);
+        await wait(1000);
       }
     }
 
@@ -873,6 +921,9 @@
     if (state.isStopped) {
       setStatus('stopped');
       log(`Proses dihentikan. Total: ${state.stats.unliked} post di-unlike dalam ${state.stats.batches} batch.`, 'warn');
+    } else if (batchResult === 'limit') {
+      setStatus('finished');
+      log(`✅ Selesai! Session limit ${sessionLimit} tercapai. Total: ${state.stats.unliked} post dalam ${state.stats.batches} batch.`, 'success');
     } else if (batchResult === 'empty') {
       setStatus('finished');
       log(`✅ Semua postingan yang disukai sudah berhasil di-unlike! Total: ${state.stats.unliked} post dalam ${state.stats.batches} batch.`, 'success');
